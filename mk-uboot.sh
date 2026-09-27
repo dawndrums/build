@@ -26,6 +26,37 @@ fi
 
 SPI_IMAGE=${OUT}/u-boot/spi/spi_image.img
 
+
+prepare_rk3588_trust_blobs() {
+	local rkbin_root="${LOCALPATH}/rkbin"
+	local trust_ini="${rkbin_root}/RKTRUST/RK3588TRUST.ini"
+	local bl31_rel bl32_rel
+
+	if [ ! -f "${trust_ini}" ]; then
+		echo "ERROR: missing ${trust_ini}" >&2
+		return 1
+	fi
+
+	bl31_rel=$(sed -n '/^PATH=.*_bl31_.*\.elf$/s/^PATH=//p' "${trust_ini}" | head -n 1 | tr -d '\r')
+	bl32_rel=$(sed -n '/^PATH=.*_bl32_.*\.bin$/s/^PATH=//p' "${trust_ini}" | head -n 1 | tr -d '\r')
+
+	if [ -z "${bl31_rel}" ] || [ ! -f "${rkbin_root}/${bl31_rel}" ]; then
+		echo "ERROR: BL31 not found from ${trust_ini}: ${bl31_rel}" >&2
+		return 1
+	fi
+
+	if [ -z "${bl32_rel}" ] || [ ! -f "${rkbin_root}/${bl32_rel}" ]; then
+		echo "ERROR: BL32/OP-TEE not found from ${trust_ini}: ${bl32_rel}" >&2
+		return 1
+	fi
+
+	install -m 0644 "${rkbin_root}/${bl31_rel}" bl31.elf
+	install -m 0644 "${rkbin_root}/${bl32_rel}" tee.bin
+
+	echo "Using BL31: ${rkbin_root}/${bl31_rel}"
+	echo "Using BL32: ${rkbin_root}/${bl32_rel}"
+}
+
 generate_spi_image() {
 	dd if=/dev/zero of=$SPI_IMAGE bs=1M count=0 seek=16
 	parted -s $SPI_IMAGE mklabel gpt
@@ -59,7 +90,8 @@ cd ${LOCALPATH}/u-boot
 
 if [ "${CHIP}" == "rk3588s" ] || [ "${CHIP}" == "rk3588" ]; then
 	make ${UBOOT_DEFCONFIG}
-	make BL31=../rkbin/bin/rk35/rk3588_bl31_v1.50.elf spl/u-boot-spl.bin u-boot.dtb u-boot.itb
+	prepare_rk3588_trust_blobs
+	make spl/u-boot-spl.bin u-boot.dtb u-boot.itb
 	./tools/mkimage -n rk3588 -T rksd -d ../rkbin/bin/rk35/rk3588_ddr_lp4_1866MHz_lp4x_2112MHz_lp5_2400MHz_v1.19.bin:spl/u-boot-spl.bin idbloader.img
 	cp u-boot.itb ${OUT}/u-boot/
 	cp idbloader.img ${OUT}/u-boot/
@@ -67,7 +99,8 @@ if [ "${CHIP}" == "rk3588s" ] || [ "${CHIP}" == "rk3588" ]; then
 	if [ -n "$UBOOT_SPI_DEFCONFIG" ]; then
 		make distclean
 		make ${UBOOT_SPI_DEFCONFIG}
-		make BL31=../rkbin/bin/rk35/rk3588_bl31_v1.50.elf spl/u-boot-spl.bin u-boot.dtb u-boot.itb
+		prepare_rk3588_trust_blobs
+		make spl/u-boot-spl.bin u-boot.dtb u-boot.itb
 		./tools/mkimage -n rk3588 -T rksd -d ../rkbin/bin/rk35/rk3588_ddr_lp4_1866MHz_lp4x_2112MHz_lp5_2400MHz_v1.19.bin:spl/u-boot-spl.bin idbloader.img
 		cp u-boot.itb ${OUT}/u-boot/spi/
 		cp idbloader.img ${OUT}/u-boot/spi/
@@ -75,6 +108,7 @@ if [ "${CHIP}" == "rk3588s" ] || [ "${CHIP}" == "rk3588" ]; then
 	fi
 	generate_spi_image
         $TOOLPATH/loaderimage --pack --uboot ./arch/arm/dts/rk3588s-divine-d.dtb uboot.img 0x200000
+
         cp uboot.img ${OUT}/u-boot/
         echo "uboot.img is ready"
 fi
